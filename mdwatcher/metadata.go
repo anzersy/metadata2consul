@@ -41,7 +41,7 @@ func (mc *MetadataToConsul) DoSynchronization(str string) {
 			Tags:    tags,
 			Address: con.PrimaryIp,
 			Check: &api.AgentServiceCheck{
-				Status: "falling",
+				Status: con.State,
 			},
 		}
 
