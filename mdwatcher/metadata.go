@@ -5,24 +5,42 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/hashicorp/consul/api"
 	"github.com/rancher/go-rancher-metadata/metadata"
-	"sync"
+	"net/http"
 )
 
 type MetadataToConsul struct {
 	Mdclient  metadata.Client
 	Conclient *api.Client
-	Lock      sync.Mutex
+}
+
+func (mc *MetadataToConsul) ListenAndServe(listen string) error {
+	http.HandleFunc("/ping", mc.ping)
+	logrus.Infof("Listening on %s", listen)
+	err := http.ListenAndServe(listen, nil)
+	if err != nil {
+		logrus.Errorf("got error while ListenAndServe: %v", err)
+	}
+	return err
+}
+
+func (mc *MetadataToConsul) ping (rw http.ResponseWriter, req *http.Request) {
+	logrus.Debug("Received ping request")
+	rw.Write([]byte("OK"))
 }
 
 func (mc *MetadataToConsul) Synchronize() error {
-	return mc.Mdclient.OnChangeWithError(10, mc.DoSynchronization)
+	return mc.Mdclient.OnChangeWithError(10, mc.doSynchronization)
 }
 
-func (mc *MetadataToConsul) DoSynchronization(str string) {
-	var err error
+func (mc *MetadataToConsul) doSynchronization(version string){
+	if err := mc.DoSynchronization(version);err != nil{
+		logrus.Errorf("DoSynchronization exited with error: %v", err)
+	}
+}
 
-	mc.Lock.Lock()
-	defer mc.Lock.Unlock()
+func (mc *MetadataToConsul) DoSynchronization(str string) error {
+
+	ec := make(chan error)
 
 	cons, _ := mc.Mdclient.GetContainers()
 
@@ -45,20 +63,19 @@ func (mc *MetadataToConsul) DoSynchronization(str string) {
 			},
 		}
 
-		err = mc.Conclient.Agent().ServiceDeregister(svc.Name)
+		err := mc.Conclient.Agent().ServiceDeregister(svc.Name)
 
 		if err != nil {
-			logrus.Infof("Deregister service %s failed.", svc.Name)
-		} else {
-			logrus.Infof("Deregister service %s successfully.", svc.Name)
+			ec<- err
 		}
 
 		err = mc.Conclient.Agent().ServiceRegister(svc)
 
 		if err != nil {
-			logrus.Infof("Register service %s failed.", svc.Name)
-		} else {
-			logrus.Infof("Register service %s successfully.", svc.Name)
+			ec<- err
 		}
 	}
+
+	err := <-ec
+	return err
 }
